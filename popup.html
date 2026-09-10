@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 250px;
+      font-family: Arial, sans-serif;
+      padding: 14px;
+      margin: 0;
+      background-color: #f7f9fc;
+    }
+    h3 {
+      margin-top: 0;
+      color: #1e293b;
+      font-size: 15px;
+    }
+    .badge {
+      padding: 8px;
+      border-radius: 6px;
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+    .safe { background: #dcfce7; color: #166534; }
+    .warning { background: #fee2e2; color: #991b1b; }
+    p { font-size: 13px; margin: 6px 0; color: #475569; }
+    b { color: #0f172a; }
+  </style>
+</head>
+<body>
+  <h3>🛡️ Shadow Persona</h3>
+  <div id="status" class="badge">Scanning...</div>
+  <p>Total input fields: <b id="total">-</b></p>
+  <p>Hidden fields: <b id="hidden">-</b></p>
+  <p>Invisible traps: <b id="traps">-</b></p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
