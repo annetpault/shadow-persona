@@ -4,81 +4,101 @@
   <meta charset="UTF-8">
   <style>
     body {
-      width: 280px;
+      width: 290px;
       font-family: Arial, sans-serif;
-      padding: 14px;
+      padding: 12px;
       margin: 0;
-      background-color: #f7f9fc;
+      background-color: #f8fafc;
     }
-    h3 {
-      margin-top: 0;
-      color: #1e293b;
-      font-size: 15px;
-    }
+    h3 { margin-top: 0; color: #0f172a; font-size: 15px; }
     .badge {
-      padding: 8px;
+      padding: 6px;
       border-radius: 6px;
       font-weight: bold;
       text-align: center;
-      margin-bottom: 12px;
-      font-size: 13px;
+      margin-bottom: 10px;
+      font-size: 12px;
     }
     .safe { background: #dcfce7; color: #166534; }
     .warning { background: #fee2e2; color: #991b1b; }
-    p { font-size: 13px; margin: 4px 0; color: #475569; }
-    b { color: #0f172a; }
-    
-    /* Persona Card Styles */
     .persona-card {
-      background: white;
+      background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: 8px;
       padding: 10px;
-      margin-top: 12px;
     }
-    .persona-field {
-      font-size: 12px;
-      color: #64748b;
-      margin-bottom: 6px;
-    }
-    .persona-val {
-      font-family: monospace;
-      color: #0f172a;
-      font-weight: bold;
-    }
+    .field { font-size: 12px; color: #64748b; margin-bottom: 5px; }
+    .val { font-family: monospace; color: #0f172a; font-weight: bold; word-break: break-all; }
     button {
       width: 100%;
-      background-color: #2563eb;
-      color: white;
       border: none;
       border-radius: 6px;
-      padding: 9px;
-      font-size: 13px;
+      padding: 8px;
+      font-size: 12px;
       font-weight: bold;
       cursor: pointer;
-      margin-top: 8px;
+      margin-top: 6px;
     }
-    button:hover { background-color: #1d4ed8; }
-    .btn-secondary {
-      background-color: #64748b;
-      margin-top: 4px;
+    .btn-primary { background: #2563eb; color: white; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-secondary { background: #64748b; color: white; }
+    .btn-secondary:hover { background: #475569; }
+    .btn-accent { background: #0f172a; color: white; }
+    .btn-accent:hover { background: #1e293b; }
+    .btn-vault { background: #059669; color: white; }
+    .btn-vault:hover { background: #047857; }
+    .inbox-box, .vault-box {
+      margin-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 8px;
     }
-    .btn-secondary:hover { background-color: #475569; }
+    #inbox-status, .vault-title { font-size: 11px; color: #64748b; margin-bottom: 4px; }
+    .mail-item, .vault-item {
+      background: #f1f5f9;
+      border-radius: 4px;
+      padding: 6px;
+      font-size: 11px;
+      margin-bottom: 4px;
+      border-left: 3px solid #059669;
+    }
+    .mail-item { border-left-color: #2563eb; }
   </style>
 </head>
 <body>
   <h3>🛡️ Shadow Persona</h3>
   <div id="status" class="badge">Scanning...</div>
-  <p>Total input fields: <b id="total">-</b></p>
-  <p>Hidden fields: <b id="hidden">-</b></p>
-  <p>Invisible traps: <b id="traps">-</b></p>
+
+  <!-- Hidden elements to safely support popup.js counters without layout clutter -->
+  <span id="total" style="display:none">0</span>
+  <span id="hidden" style="display:none">0</span>
+  <span id="traps" style="display:none">0</span>
+  <span id="mock-user" style="display:none">---</span>
 
   <div class="persona-card">
-    <div class="persona-field">Name: <span id="mock-name" class="persona-val">---</span></div>
-    <div class="persona-field">Username: <span id="mock-user" class="persona-val">---</span></div>
-    <div class="persona-field">Password: <span id="mock-pass" class="persona-val">---</span></div>
-    <button id="btn-fill">⚡ Autofill Page</button>
-    <button id="btn-regen" class="btn-secondary">🔄 Reroll Identity</button>
+    <div class="field">Name: <span id="mock-name" class="val">---</span></div>
+    <div class="field">Burner Mail: <span id="mock-email" class="val">Generating...</span></div>
+    <div class="field">Password: <span id="mock-pass" class="val">---</span></div>
+    
+    <button id="btn-fill" class="btn-primary">⚡ Autofill Page</button>
+    <button id="btn-regen" class="btn-secondary">🔄 Reroll Identity & Mail</button>
+    <button id="btn-bypass" class="btn-accent">🔓 Bypass Sign-up Wall</button>
+    <button id="btn-save-vault" class="btn-vault">🔒 Save to Encrypted Vault</button>
+
+    <div class="inbox-box">
+      <div id="inbox-status">Inbox (Listening for OTPs...)</div>
+      <div id="mail-list"></div>
+      <button id="btn-check-mail" class="btn-secondary" style="font-size: 10px; padding: 4px;">📥 Check Inbox</button>
+    </div>
+
+    <div class="vault-box">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span class="vault-title" style="font-weight: bold; color: #334155;">🔒 Encrypted Vault (AES-256)</span>
+        <button id="btn-clear-vault" style="background: none; border: none; color: #ef4444; font-size: 10px; cursor: pointer; width: auto; margin: 0; padding: 0;">Clear</button>
+      </div>
+      <div id="vault-list" style="max-height: 110px; overflow-y: auto; margin-top: 6px;">
+        <span style="color: #94a3b8; font-size: 11px;">No credentials saved yet.</span>
+      </div>
+    </div>
   </div>
 
   <script src="popup.js"></script>
