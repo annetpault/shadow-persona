@@ -1,4 +1,3 @@
-// Arrays to randomly generate mock personas
 const firstNames = ["Alex", "Jordan", "Taylor", "Morgan", "Sam", "Chris", "Pat", "Riley", "Cameron"];
 const lastNames = ["Vance", "Mercer", "Sterling", "Cross", "Hayden", "Rowan", "Ellis", "Quinn"];
 
@@ -24,7 +23,19 @@ let activePersona = {
   password: ""
 };
 
-// 1. Generate identity & fetch real temporary inbox from 1secmail
+let autoPollTimer = null;
+
+async function initPersona() {
+  const stored = await chrome.storage.local.get("activePersona");
+  if (stored.activePersona && stored.activePersona.email) {
+    activePersona = stored.activePersona;
+    updateUI();
+    startAutoInboxListener();
+  } else {
+    await createPersona();
+  }
+}
+
 async function createPersona() {
   const first = getRandomItem(firstNames);
   const last = getRandomItem(lastNames);
@@ -32,32 +43,30 @@ async function createPersona() {
   const username = `${first.toLowerCase()}_${last.toLowerCase()}${num}`;
   const password = generatePassword();
 
-  try {
-    const res = await fetch("https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1");
-    const [genEmail] = await res.json();
-    const [login, domain] = genEmail.split("@");
+  const emailEl = document.getElementById("mock-email");
+  if (emailEl) emailEl.textContent = "Generating...";
 
-    activePersona = {
-      fullName: `${first} ${last}`,
-      username: username,
-      email: genEmail,
-      login: login,
-      domain: domain,
-      password: password
-    };
+  try {
+    const backendRes = await fetch("http://127.0.0.1:8000/api/persona");
+    if (backendRes.ok) {
+      activePersona = await backendRes.json();
+    } else {
+      throw new Error("FastAPI offline");
+    }
   } catch (err) {
-    // Fallback if offline or API is unreachable
     activePersona = {
       fullName: `${first} ${last}`,
       username: username,
-      email: `${username}@1secmail.com`,
+      email: `${username}@shadowmail.local`,
       login: username,
-      domain: "1secmail.com",
+      domain: "shadowmail.local",
       password: password
     };
   }
 
+  await chrome.storage.local.set({ activePersona });
   updateUI();
+  startAutoInboxListener();
 }
 
 function updateUI() {
@@ -72,41 +81,71 @@ function updateUI() {
   if (passEl) passEl.textContent = activePersona.password;
 }
 
-// 2. Poll for incoming OTPs / emails
-async function checkInbox() {
+function startAutoInboxListener() {
+  if (autoPollTimer) clearInterval(autoPollTimer);
+  if (!activePersona.login || !activePersona.domain) return;
+
+  const inboxStatus = document.getElementById("inbox-status");
+  if (inboxStatus) {
+    inboxStatus.innerHTML = `Inbox: ⏳ Listening on <code>${activePersona.login}@${activePersona.domain}</code>...`;
+  }
+
+  checkInbox(true);
+  autoPollTimer = setInterval(async () => {
+    await checkInbox(true);
+  }, 2500);
+}
+
+async function checkInbox(isAuto = false) {
   if (!activePersona.login || !activePersona.domain) return;
   const listEl = document.getElementById("mail-list");
+  const inboxStatus = document.getElementById("inbox-status");
   if (!listEl) return;
 
-  listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>Checking...</span>";
+  if (!isAuto) {
+    listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>Checking...</span>";
+  }
 
   try {
-    const res = await fetch(
-      `https://www.1secmail.com/api/v1/?action=getMessages&login=${activePersona.login}&domain=${activePersona.domain}`
+    const apiRes = await fetch(
+      `http://127.0.0.1:8000/api/inbox/otp?login=${encodeURIComponent(activePersona.login)}&domain=${encodeURIComponent(activePersona.domain)}`
     );
-    const messages = await res.json();
 
-    if (messages.length === 0) {
-      listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>No emails received yet.</span>";
-    } else {
-      listEl.innerHTML = "";
-      for (const msg of messages.slice(0, 2)) {
-        const mailDetail = await fetch(
-          `https://www.1secmail.com/api/v1/?action=readMessage&login=${activePersona.login}&domain=${activePersona.domain}&id=${msg.id}`
-        ).then((r) => r.json());
+    if (apiRes.ok) {
+      const data = await apiRes.json();
+      if (data.status === "success" && data.otp) {
+        clearInterval(autoPollTimer);
 
-        const item = document.createElement("div");
-        item.className = "mail-item";
-        item.innerHTML = `<b>From:</b> ${msg.from}<br><b>Subject:</b> ${msg.subject}<br><b>Preview:</b> ${mailDetail.textBody.substring(0, 80)}...`;
-        listEl.appendChild(item);
+        if (inboxStatus) {
+          inboxStatus.innerHTML = `<span style="color:#16a34a; font-weight:bold;">🎉 OTP Received & Verified!</span>`;
+        }
+
+        listEl.innerHTML = `
+          <div class="mail-item" style="border-left-color: #16a34a; background: #dcfce7; color: #166534; padding: 6px;">
+            <b>From:</b> ${data.from || "Verification"}<br>
+            <b>Subject:</b> ${data.subject || "OTP Code"}<br>
+            <div style="font-size: 15px; font-weight: bold; letter-spacing: 2px; margin-top: 4px;">
+              Code: ${data.otp}
+            </div>
+          </div>
+        `;
+
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+          chrome.tabs.sendMessage(tab.id, { action: "AUTOFILL_OTP", otp: data.otp });
+        }
+        return;
+      } else if (!isAuto) {
+        listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>No emails received yet.</span>";
       }
     }
-  } catch (e) {
-    listEl.innerHTML = "<span style='font-size:11px;color:#ef4444'>Failed to fetch messages.</span>";
+  } catch (err) {
+    if (!isAuto) {
+      listEl.innerHTML = "<span style='font-size:11px;color:#ef4444'>Backend connection offline.</span>";
+    }
   }
 }
 
-// 3. Render scan findings
 function renderScanReport(report) {
   if (!report) return;
   const totalEl = document.getElementById("total");
@@ -123,31 +162,24 @@ function renderScanReport(report) {
       statusBox.textContent = `⚠️ Warning: ${report.invisibleBoxes} Trap(s) Detected`;
       statusBox.className = "badge warning";
     } else {
-      statusBox.textContent = "✅ Page Appears Safe";
+      statusBox.textContent = "🛡️ Protected: No Traps";
       statusBox.className = "badge safe";
     }
   }
 }
 
-// 4. Request live DOM scan from content.js on popup open
 async function triggerActiveScan() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id) {
     chrome.tabs.sendMessage(tab.id, { action: "REQUEST_SCAN" }, (response) => {
-      if (chrome.runtime.lastError || !response) {
-        chrome.storage.local.get(["scanReport"], (data) => {
-          renderScanReport(data.scanReport);
-        });
-      } else {
+      if (!chrome.runtime.lastError && response) {
         renderScanReport(response);
       }
     });
   }
 }
 
-// --- MODULE 4: AES-256-GCM LOCAL ENCRYPTED VAULT ---
-
-// Derive or load persistent 256-bit AES key
+// AES-256 Vault Helpers
 async function getOrCreateVaultKey() {
   const stored = await chrome.storage.local.get(["vaultMasterKey"]);
   if (stored.vaultMasterKey) {
@@ -171,10 +203,9 @@ async function getOrCreateVaultKey() {
   return newKey;
 }
 
-// Encrypt persona data to AES-256-GCM ciphertext
 async function encryptPersona(personaObj) {
   const key = await getOrCreateVaultKey();
-  const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV recommended for GCM
+  const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(JSON.stringify(personaObj));
 
   const cipherBuffer = await crypto.subtle.encrypt(
@@ -189,7 +220,6 @@ async function encryptPersona(personaObj) {
   return { iv: ivHex, ciphertext: dataHex, date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
 }
 
-// Decrypt ciphertext back to persona object
 async function decryptPersona(encryptedRecord) {
   const key = await getOrCreateVaultKey();
   const iv = new Uint8Array(encryptedRecord.iv.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
@@ -204,7 +234,6 @@ async function decryptPersona(encryptedRecord) {
   return JSON.parse(new TextDecoder().decode(decryptedBuffer));
 }
 
-// Render decrypted items in vault UI
 async function loadVaultUI() {
   const vaultList = document.getElementById("vault-list");
   if (!vaultList) return;
@@ -235,17 +264,35 @@ async function loadVaultUI() {
   }
 }
 
-// 5. Wire up button actions
+// Button Listeners
 document.getElementById("btn-regen").addEventListener("click", () => {
   createPersona();
 });
 
 const checkMailBtn = document.getElementById("btn-check-mail");
 if (checkMailBtn) {
-  checkMailBtn.addEventListener("click", checkInbox);
+  checkMailBtn.addEventListener("click", () => checkInbox(false));
 }
 
-// Autofill action
+// Send Test OTP Button
+const simulateOtpBtn = document.getElementById("btn-simulate-otp");
+if (simulateOtpBtn) {
+  simulateOtpBtn.addEventListener("click", async () => {
+    if (!activePersona.email) return;
+    simulateOtpBtn.textContent = "Sending...";
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/inbox/simulate?email=${encodeURIComponent(activePersona.email)}`);
+      const data = await res.json();
+      simulateOtpBtn.textContent = "Sent!";
+      setTimeout(() => (simulateOtpBtn.textContent = "⚡ Send Test OTP"), 1500);
+      await checkInbox(false);
+    } catch (e) {
+      simulateOtpBtn.textContent = "Error";
+      setTimeout(() => (simulateOtpBtn.textContent = "⚡ Send Test OTP"), 1500);
+    }
+  });
+}
+
 document.getElementById("btn-fill").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id) {
@@ -256,7 +303,6 @@ document.getElementById("btn-fill").addEventListener("click", async () => {
   }
 });
 
-// Paywall / Backdrop bypass action
 const bypassBtn = document.getElementById("btn-bypass");
 if (bypassBtn) {
   bypassBtn.addEventListener("click", async () => {
@@ -264,19 +310,18 @@ if (bypassBtn) {
     if (tab?.id) {
       chrome.tabs.sendMessage(tab.id, { action: "BYPASS_OVERLAY" }, (response) => {
         if (response?.removedCount > 0) {
-          bypassBtn.textContent = `✅ Removed ${response.removedCount} Overlay(s)`;
+          bypassBtn.textContent = `✅ Removed Wall`;
         } else {
           bypassBtn.textContent = "No Sign-up Wall Found";
         }
         setTimeout(() => {
           bypassBtn.textContent = "🔓 Bypass Sign-up Wall";
-        }, 2000);
+        }, 1800);
       });
     }
   });
 }
 
-// Save to Encrypted Vault action
 const saveVaultBtn = document.getElementById("btn-save-vault");
 if (saveVaultBtn) {
   saveVaultBtn.addEventListener("click", async () => {
@@ -298,7 +343,6 @@ if (saveVaultBtn) {
   });
 }
 
-// Clear Vault action
 const clearVaultBtn = document.getElementById("btn-clear-vault");
 if (clearVaultBtn) {
   clearVaultBtn.addEventListener("click", async () => {
@@ -307,7 +351,6 @@ if (clearVaultBtn) {
   });
 }
 
-// Initialize on popup open
-createPersona();
+initPersona();
 triggerActiveScan();
 loadVaultUI();

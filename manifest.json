@@ -2,8 +2,17 @@
   "manifest_version": 3,
   "name": "Shadow Persona",
   "version": "1.0",
-  "description": "Scans websites for hidden traps and generates fake details.",
-  "permissions": ["activeTab", "storage"],
+  "description": "Privacy-first form automation, synthetic persona generator, disposable mailbox, and local encrypted vault",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*",
+    "https://www.1secmail.com/*"
+  ],
   "action": {
     "default_popup": "popup.html"
   },
@@ -11,7 +20,7 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_end"
     }
   ]
 }
