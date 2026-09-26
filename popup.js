@@ -25,7 +25,6 @@ let activePersona = {
 
 let autoPollTimer = null;
 
-// 1. Load existing persona from storage or generate a new one
 async function initPersona() {
   const stored = await chrome.storage.local.get("activePersona");
   if (stored.activePersona && stored.activePersona.email) {
@@ -37,7 +36,6 @@ async function initPersona() {
   }
 }
 
-// Generate new persona and save to storage (only on fresh boot or reroll)
 async function createPersona() {
   const first = getRandomItem(firstNames);
   const last = getRandomItem(lastNames);
@@ -55,35 +53,18 @@ async function createPersona() {
     } else {
       throw new Error("FastAPI offline");
     }
-  } catch (backendErr) {
-    try {
-      const res = await fetch("https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1");
-      const [genEmail] = await res.json();
-      const [login, domain] = genEmail.split("@");
-
-      activePersona = {
-        fullName: `${first} ${last}`,
-        username: username,
-        email: genEmail,
-        login: login,
-        domain: domain,
-        password: password
-      };
-    } catch (err) {
-      activePersona = {
-        fullName: `${first} ${last}`,
-        username: username,
-        email: `${username}@1secmail.com`,
-        login: username,
-        domain: "1secmail.com",
-        password: password
-      };
-    }
+  } catch (err) {
+    activePersona = {
+      fullName: `${first} ${last}`,
+      username: username,
+      email: `${username}@shadowmail.local`,
+      login: username,
+      domain: "shadowmail.local",
+      password: password
+    };
   }
 
-  // Save to Chrome Storage so closing the popup doesn't lose the address
   await chrome.storage.local.set({ activePersona });
-
   updateUI();
   startAutoInboxListener();
 }
@@ -100,21 +81,19 @@ function updateUI() {
   if (passEl) passEl.textContent = activePersona.password;
 }
 
-// 2. Automated Polling Engine & OTP Interceptor
 function startAutoInboxListener() {
   if (autoPollTimer) clearInterval(autoPollTimer);
   if (!activePersona.login || !activePersona.domain) return;
 
   const inboxStatus = document.getElementById("inbox-status");
   if (inboxStatus) {
-    inboxStatus.innerHTML = `Inbox: ⏳ Listening for OTP on <code>${activePersona.login}@${activePersona.domain}</code>...`;
+    inboxStatus.innerHTML = `Inbox: ⏳ Listening on <code>${activePersona.login}@${activePersona.domain}</code>...`;
   }
 
-  // Poll immediately, then every 4 seconds
   checkInbox(true);
   autoPollTimer = setInterval(async () => {
     await checkInbox(true);
-  }, 4000);
+  }, 2500);
 }
 
 async function checkInbox(isAuto = false) {
@@ -128,90 +107,45 @@ async function checkInbox(isAuto = false) {
   }
 
   try {
-    // 1. Try FastAPI backend first
-    try {
-      const apiRes = await fetch(
-        `http://127.0.0.1:8000/api/inbox/otp?login=${encodeURIComponent(activePersona.login)}&domain=${encodeURIComponent(activePersona.domain)}`
-      );
-      if (apiRes.ok) {
-        const data = await apiRes.json();
-        if (data.status === "success" && data.otp) {
-          clearInterval(autoPollTimer);
-
-          if (inboxStatus) {
-            inboxStatus.innerHTML = `<span style="color:#16a34a; font-weight:bold;">🎉 OTP Received & Verified!</span>`;
-          }
-
-          listEl.innerHTML = `
-            <div class="mail-item" style="border-left-color: #16a34a; background: #dcfce7; color: #166534; padding: 6px;">
-              <b>From:</b> ${data.from || "Verification"}<br>
-              <b>Subject:</b> ${data.subject || "OTP Code"}<br>
-              <div style="font-size: 15px; font-weight: bold; letter-spacing: 2px; margin-top: 4px;">
-                Code: ${data.otp}
-              </div>
-            </div>
-          `;
-
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (tab?.id) {
-            chrome.tabs.sendMessage(tab.id, { action: "AUTOFILL_OTP", otp: data.otp });
-          }
-          return;
-        }
-      }
-    } catch (_) {}
-
-    // 2. Direct 1secmail fallback
-    const res = await fetch(
-      `https://www.1secmail.com/api/v1/?action=getMessages&login=${activePersona.login}&domain=${activePersona.domain}`
+    const apiRes = await fetch(
+      `http://127.0.0.1:8000/api/inbox/otp?login=${encodeURIComponent(activePersona.login)}&domain=${encodeURIComponent(activePersona.domain)}`
     );
-    const messages = await res.json();
 
-    if (messages.length === 0) {
-      if (!isAuto) {
+    if (apiRes.ok) {
+      const data = await apiRes.json();
+      if (data.status === "success" && data.otp) {
+        clearInterval(autoPollTimer);
+
+        if (inboxStatus) {
+          inboxStatus.innerHTML = `<span style="color:#16a34a; font-weight:bold;">🎉 OTP Received & Verified!</span>`;
+        }
+
+        listEl.innerHTML = `
+          <div class="mail-item" style="border-left-color: #16a34a; background: #dcfce7; color: #166534; padding: 6px;">
+            <b>From:</b> ${data.from || "Verification"}<br>
+            <b>Subject:</b> ${data.subject || "OTP Code"}<br>
+            <div style="font-size: 15px; font-weight: bold; letter-spacing: 2px; margin-top: 4px;">
+              Code: ${data.otp}
+            </div>
+          </div>
+        `;
+
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+          chrome.tabs.sendMessage(tab.id, { action: "AUTOFILL_OTP", otp: data.otp });
+        }
+        return;
+      } else if (!isAuto) {
         listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>No emails received yet.</span>";
       }
-    } else {
-      listEl.innerHTML = "";
-      for (const msg of messages.slice(0, 2)) {
-        const mailDetail = await fetch(
-          `https://www.1secmail.com/api/v1/?action=readMessage&login=${activePersona.login}&domain=${activePersona.domain}&id=${msg.id}`
-        ).then((r) => r.json());
-
-        const otpMatch = mailDetail.textBody ? mailDetail.textBody.match(/\b\d{4,8}\b/) : null;
-        const detectedOtp = otpMatch ? otpMatch[0] : null;
-
-        if (detectedOtp) {
-          clearInterval(autoPollTimer);
-          if (inboxStatus) {
-            inboxStatus.innerHTML = `<span style="color:#16a34a; font-weight:bold;">🎉 OTP Intercepted!</span>`;
-          }
-
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (tab?.id) {
-            chrome.tabs.sendMessage(tab.id, { action: "AUTOFILL_OTP", otp: detectedOtp });
-          }
-        }
-
-        const item = document.createElement("div");
-        item.className = "mail-item";
-        item.innerHTML = `
-          <b>From:</b> ${msg.from}<br>
-          <b>Subject:</b> ${msg.subject}<br>
-          ${detectedOtp ? `<b style="color:#16a34a; font-size:13px;">OTP: ${detectedOtp}</b><br>` : ""}
-          <b>Preview:</b> ${mailDetail.textBody.substring(0, 80)}...
-        `;
-        listEl.appendChild(item);
-      }
     }
-  } catch (e) {
+  } catch (err) {
     if (!isAuto) {
-      listEl.innerHTML = "<span style='font-size:11px;color:#ef4444'>Failed to fetch messages.</span>";
+      listEl.innerHTML = "<span style='font-size:11px;color:#ef4444'>Backend connection offline.</span>";
     }
   }
 }
 
-// 3. Render scan findings
 function renderScanReport(report) {
   if (!report) return;
   const totalEl = document.getElementById("total");
@@ -234,7 +168,6 @@ function renderScanReport(report) {
   }
 }
 
-// 4. Request live DOM scan from content.js
 async function triggerActiveScan() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id) {
@@ -246,7 +179,7 @@ async function triggerActiveScan() {
   }
 }
 
-// --- MODULE 4: AES-256-GCM LOCAL ENCRYPTED VAULT ---
+// AES-256 Vault Helpers
 async function getOrCreateVaultKey() {
   const stored = await chrome.storage.local.get(["vaultMasterKey"]);
   if (stored.vaultMasterKey) {
@@ -331,14 +264,33 @@ async function loadVaultUI() {
   }
 }
 
-// 5. Button Actions
+// Button Listeners
 document.getElementById("btn-regen").addEventListener("click", () => {
-  createPersona(); // Generates and saves a brand new persona
+  createPersona();
 });
 
 const checkMailBtn = document.getElementById("btn-check-mail");
 if (checkMailBtn) {
   checkMailBtn.addEventListener("click", () => checkInbox(false));
+}
+
+// Send Test OTP Button
+const simulateOtpBtn = document.getElementById("btn-simulate-otp");
+if (simulateOtpBtn) {
+  simulateOtpBtn.addEventListener("click", async () => {
+    if (!activePersona.email) return;
+    simulateOtpBtn.textContent = "Sending...";
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/inbox/simulate?email=${encodeURIComponent(activePersona.email)}`);
+      const data = await res.json();
+      simulateOtpBtn.textContent = "Sent!";
+      setTimeout(() => (simulateOtpBtn.textContent = "⚡ Send Test OTP"), 1500);
+      await checkInbox(false);
+    } catch (e) {
+      simulateOtpBtn.textContent = "Error";
+      setTimeout(() => (simulateOtpBtn.textContent = "⚡ Send Test OTP"), 1500);
+    }
+  });
 }
 
 document.getElementById("btn-fill").addEventListener("click", async () => {
@@ -399,7 +351,6 @@ if (clearVaultBtn) {
   });
 }
 
-// Initial Boot: restore saved persona or create one
 initPersona();
 triggerActiveScan();
 loadVaultUI();
