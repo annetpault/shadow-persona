@@ -49,14 +49,52 @@ function runShadowScan() {
     }
   });
 
-  const report = {
-    totalInputs: allInputs.length,
-    hiddenBoxes: hiddenCount,
-    invisibleBoxes: invisibleCount,
-    isSuspicious: invisibleCount > 0
-  };
+// --- MODULE 1: COMPREHENSIVE HONEYPOT & TRAP DETECTION ENGINE ---
 
-  chrome.storage.local.set({ scanReport: report });
+function isElementHiddenOrTrap(element) {
+  const style = window.getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
+
+  // 1. Explicit display/visibility hiding
+  if (
+    style.display === "none" ||
+    style.visibility === "hidden" ||
+    parseFloat(style.opacity) === 0 ||
+    element.getAttribute("aria-hidden") === "true"
+  ) {
+    return true;
+  }
+
+  // 2. Zero-dimension rendering
+  if (
+    (rect.width === 0 && rect.height === 0) ||
+    parseFloat(style.width) === 0 ||
+    parseFloat(style.height) === 0 ||
+    parseFloat(style.maxHeight) === 0
+  ) {
+    return true;
+  }
+
+  // 3. Off-screen absolute or fixed positioning
+  const left = rect.left;
+  const top = rect.top;
+  if (
+    left < -999 ||
+    top < -999 ||
+    parseFloat(style.left) < -999 ||
+    parseFloat(style.top) < -999
+  ) {
+    return true;
+  }
+
+  // 4. CSS Clipping / Collapsed bounds
+  if (
+    style.clipPath === "inset(50%)" ||
+    style.clipPath === "polygon(0px 0px, 0px 0px, 0px 0px)" ||
+    (style.clip && style.clip !== "auto" && style.clip.includes("rect(0"))
+  ) {
+    return true;
+  }
 
   if (report.isSuspicious && !document.getElementById("shadow-persona-hud-host")) {
     injectInPageWarning(report);

@@ -55,7 +55,9 @@ function createPersona() {
     password: password
   };
 
+  await chrome.storage.local.set({ activePersona });
   updateUI();
+  startAutoInboxListener();
 }
 
 function updateUI() {
@@ -81,13 +83,14 @@ function extractOTP(text) {
 async function checkInbox() {
   if (!activePersona.login || !activePersona.domain) return;
   const listEl = document.getElementById("mail-list");
+  const inboxStatus = document.getElementById("inbox-status");
   if (!listEl) return;
 
   listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>Checking inbox...</span>";
 
   try {
-    const res = await fetch(
-      `https://www.1secmail.com/api/v1/?action=getMessages&login=${activePersona.login}&domain=${activePersona.domain}`
+    const apiRes = await fetch(
+      `http://127.0.0.1:8000/api/inbox/otp?login=${encodeURIComponent(activePersona.login)}&domain=${encodeURIComponent(activePersona.domain)}`
     );
 
     if (!res.ok) throw new Error("API Offline");
@@ -160,7 +163,6 @@ async function injectOtpToPage(code) {
   }
 }
 
-// 3. Render scan findings
 function renderScanReport(report) {
   if (!report) return;
   const totalEl = document.getElementById("total");
@@ -177,7 +179,7 @@ function renderScanReport(report) {
       statusBox.textContent = `⚠️ Warning: ${report.invisibleBoxes} Trap(s) Detected`;
       statusBox.className = "badge warning";
     } else {
-      statusBox.textContent = "✅ Page Appears Safe";
+      statusBox.textContent = "🛡️ Protected: No Traps";
       statusBox.className = "badge safe";
     }
   }
@@ -299,7 +301,26 @@ if (regenBtn) {
 
 const checkMailBtn = document.getElementById("btn-check-mail");
 if (checkMailBtn) {
-  checkMailBtn.addEventListener("click", checkInbox);
+  checkMailBtn.addEventListener("click", () => checkInbox(false));
+}
+
+// Send Test OTP Button
+const simulateOtpBtn = document.getElementById("btn-simulate-otp");
+if (simulateOtpBtn) {
+  simulateOtpBtn.addEventListener("click", async () => {
+    if (!activePersona.email) return;
+    simulateOtpBtn.textContent = "Sending...";
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/inbox/simulate?email=${encodeURIComponent(activePersona.email)}`);
+      const data = await res.json();
+      simulateOtpBtn.textContent = "Sent!";
+      setTimeout(() => (simulateOtpBtn.textContent = "⚡ Send Test OTP"), 1500);
+      await checkInbox(false);
+    } catch (e) {
+      simulateOtpBtn.textContent = "Error";
+      setTimeout(() => (simulateOtpBtn.textContent = "⚡ Send Test OTP"), 1500);
+    }
+  });
 }
 
 const fillBtn = document.getElementById("btn-fill");
