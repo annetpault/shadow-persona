@@ -1,5 +1,10 @@
+// popup.js - Persona Generator, Autofill, DOM Scanner, Encrypted Vault, and Smart OTP Autofill
+
 const firstNames = ["Alex", "Jordan", "Taylor", "Morgan", "Sam", "Chris", "Pat", "Riley", "Cameron"];
 const lastNames = ["Vance", "Mercer", "Sterling", "Cross", "Hayden", "Rowan", "Ellis", "Quinn"];
+
+// Use 1secmail.com exclusively as other domains often fail DNS/CORS in browser fetch
+const MAIL_DOMAINS = ["1secmail.com"];
 
 function getRandomItem(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -23,46 +28,32 @@ let activePersona = {
   password: ""
 };
 
-let autoPollTimer = null;
-
-async function initPersona() {
-  const stored = await chrome.storage.local.get("activePersona");
-  if (stored.activePersona && stored.activePersona.email) {
-    activePersona = stored.activePersona;
-    updateUI();
-    startAutoInboxListener();
-  } else {
-    await createPersona();
-  }
+function isValidTab(tab) {
+  if (!tab || !tab.id || !tab.url) return false;
+  return (
+    tab.url.startsWith("http://") ||
+    tab.url.startsWith("https://") ||
+    tab.url.startsWith("file://")
+  );
 }
 
-async function createPersona() {
+// 1. Instant Persona Generation
+function createPersona() {
   const first = getRandomItem(firstNames);
   const last = getRandomItem(lastNames);
   const num = Math.floor(100 + Math.random() * 900);
   const username = `${first.toLowerCase()}_${last.toLowerCase()}${num}`;
+  const domain = getRandomItem(MAIL_DOMAINS);
   const password = generatePassword();
 
-  const emailEl = document.getElementById("mock-email");
-  if (emailEl) emailEl.textContent = "Generating...";
-
-  try {
-    const backendRes = await fetch("http://127.0.0.1:8000/api/persona");
-    if (backendRes.ok) {
-      activePersona = await backendRes.json();
-    } else {
-      throw new Error("FastAPI offline");
-    }
-  } catch (err) {
-    activePersona = {
-      fullName: `${first} ${last}`,
-      username: username,
-      email: `${username}@shadowmail.local`,
-      login: username,
-      domain: "shadowmail.local",
-      password: password
-    };
-  }
+  activePersona = {
+    fullName: `${first} ${last}`,
+    username: username,
+    email: `${username}@${domain}`,
+    login: username,
+    domain: domain,
+    password: password
+  };
 
   await chrome.storage.local.set({ activePersona });
   updateUI();
@@ -81,68 +72,94 @@ function updateUI() {
   if (passEl) passEl.textContent = activePersona.password;
 }
 
-function startAutoInboxListener() {
-  if (autoPollTimer) clearInterval(autoPollTimer);
-  if (!activePersona.login || !activePersona.domain) return;
-
-  const inboxStatus = document.getElementById("inbox-status");
-  if (inboxStatus) {
-    inboxStatus.innerHTML = `Inbox: ⏳ Listening on <code>${activePersona.login}@${activePersona.domain}</code>...`;
-  }
-
-  checkInbox(true);
-  autoPollTimer = setInterval(async () => {
-    await checkInbox(true);
-  }, 2500);
+// Helper: Extract 4-to-6 digit OTP from message body
+function extractOTP(text) {
+  if (!text) return null;
+  const match = text.match(/\b\d{4,6}\b/);
+  return match ? match[0] : null;
 }
 
-async function checkInbox(isAuto = false) {
+// 2. Smart OTP Inbox Polling & Auto-Injection
+async function checkInbox() {
   if (!activePersona.login || !activePersona.domain) return;
   const listEl = document.getElementById("mail-list");
   const inboxStatus = document.getElementById("inbox-status");
   if (!listEl) return;
 
-  if (!isAuto) {
-    listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>Checking...</span>";
-  }
+  listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>Checking inbox...</span>";
 
   try {
     const apiRes = await fetch(
       `http://127.0.0.1:8000/api/inbox/otp?login=${encodeURIComponent(activePersona.login)}&domain=${encodeURIComponent(activePersona.domain)}`
     );
 
-    if (apiRes.ok) {
-      const data = await apiRes.json();
-      if (data.status === "success" && data.otp) {
-        clearInterval(autoPollTimer);
+    if (!res.ok) throw new Error("API Offline");
 
-        if (inboxStatus) {
-          inboxStatus.innerHTML = `<span style="color:#16a34a; font-weight:bold;">🎉 OTP Received & Verified!</span>`;
-        }
+    const messages = await res.json();
 
-        listEl.innerHTML = `
-          <div class="mail-item" style="border-left-color: #16a34a; background: #dcfce7; color: #166534; padding: 6px;">
-            <b>From:</b> ${data.from || "Verification"}<br>
-            <b>Subject:</b> ${data.subject || "OTP Code"}<br>
-            <div style="font-size: 15px; font-weight: bold; letter-spacing: 2px; margin-top: 4px;">
-              Code: ${data.otp}
-            </div>
-          </div>
-        `;
+    if (!messages || messages.length === 0) {
+      // Provide a 1-click test simulation button if testing locally
+      listEl.innerHTML = `
+        <span style='font-size:11px;color:#94a3b8'>No emails received yet.</span>
+        <button id="btn-simulate-otp" style="display:block;margin-top:6px;width:100%;font-size:10px;background:#334155;color:#f8fafc;border:none;border-radius:4px;padding:4px;cursor:pointer;">
+          ⚡ Simulate Mock Test OTP (Demo)
+        </button>
+      `;
 
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab?.id) {
-          chrome.tabs.sendMessage(tab.id, { action: "AUTOFILL_OTP", otp: data.otp });
-        }
-        return;
-      } else if (!isAuto) {
-        listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>No emails received yet.</span>";
+      document.getElementById("btn-simulate-otp")?.addEventListener("click", () => {
+        const mockCode = String(Math.floor(100000 + Math.random() * 900000));
+        injectOtpToPage(mockCode);
+        listEl.innerHTML = `<span style='font-size:11px;color:#10b981;'>Simulated OTP <b>${mockCode}</b> injected!</span>`;
+      });
+      return;
+    }
+
+    listEl.innerHTML = "";
+    for (const msg of messages.slice(0, 2)) {
+      const mailDetail = await fetch(
+        `https://www.1secmail.com/api/v1/?action=readMessage&login=${activePersona.login}&domain=${activePersona.domain}&id=${msg.id}`
+      ).then((r) => r.json());
+
+      const detectedOtp = extractOTP(mailDetail.textBody || mailDetail.body || msg.subject);
+
+      const item = document.createElement("div");
+      item.className = "mail-item";
+      item.innerHTML = `
+        <b>From:</b> ${msg.from}<br>
+        <b>Subject:</b> ${msg.subject}<br>
+        ${detectedOtp ? `<b style="color:#10b981;">Detected OTP: ${detectedOtp}</b>` : ""}
+      `;
+      listEl.appendChild(item);
+
+      // Auto-fill OTP field if detected
+      if (detectedOtp) {
+        injectOtpToPage(detectedOtp);
       }
     }
-  } catch (err) {
-    if (!isAuto) {
-      listEl.innerHTML = "<span style='font-size:11px;color:#ef4444'>Backend connection offline.</span>";
-    }
+  } catch (e) {
+    // Graceful offline fallback with local OTP injection for demo/testing
+    const fallbackOtp = String(Math.floor(100000 + Math.random() * 900000));
+    listEl.innerHTML = `
+      <span style='font-size:11px;color:#f59e0b'>1secmail API unreachable.</span>
+      <button id="btn-use-mock-otp" style="display:block;margin-top:4px;width:100%;font-size:11px;background:#2563eb;color:#fff;border:none;border-radius:4px;padding:5px;cursor:pointer;">
+        Fill Demo OTP: ${fallbackOtp}
+      </button>
+    `;
+
+    document.getElementById("btn-use-mock-otp")?.addEventListener("click", () => {
+      injectOtpToPage(fallbackOtp);
+      listEl.innerHTML = `<span style='font-size:11px;color:#10b981;'>Applied OTP <b>${fallbackOtp}</b>!</span>`;
+    });
+  }
+}
+
+// Send OTP fill message to content.js
+async function injectOtpToPage(code) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (isValidTab(tab)) {
+    chrome.tabs.sendMessage(tab.id, { action: "FILL_OTP", otp: code }, () => {
+      if (chrome.runtime.lastError) return;
+    });
   }
 }
 
@@ -168,18 +185,30 @@ function renderScanReport(report) {
   }
 }
 
+// 4. Request live DOM scan from content.js
 async function triggerActiveScan() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id) {
-    chrome.tabs.sendMessage(tab.id, { action: "REQUEST_SCAN" }, (response) => {
-      if (!chrome.runtime.lastError && response) {
-        renderScanReport(response);
-      }
+
+  if (!isValidTab(tab)) {
+    chrome.storage.local.get(["scanReport"], (data) => {
+      renderScanReport(data.scanReport);
     });
+    return;
   }
+
+  chrome.tabs.sendMessage(tab.id, { action: "REQUEST_SCAN" }, (response) => {
+    if (chrome.runtime.lastError || !response) {
+      chrome.storage.local.get(["scanReport"], (data) => {
+        renderScanReport(data.scanReport);
+      });
+    } else {
+      renderScanReport(response);
+    }
+  });
 }
 
-// AES-256 Vault Helpers
+// --- MODULE 4: AES-256-GCM LOCAL ENCRYPTED VAULT ---
+
 async function getOrCreateVaultKey() {
   const stored = await chrome.storage.local.get(["vaultMasterKey"]);
   if (stored.vaultMasterKey) {
@@ -264,10 +293,11 @@ async function loadVaultUI() {
   }
 }
 
-// Button Listeners
-document.getElementById("btn-regen").addEventListener("click", () => {
-  createPersona();
-});
+// 5. Button Bindings
+const regenBtn = document.getElementById("btn-regen");
+if (regenBtn) {
+  regenBtn.addEventListener("click", () => createPersona());
+}
 
 const checkMailBtn = document.getElementById("btn-check-mail");
 if (checkMailBtn) {
@@ -293,32 +323,39 @@ if (simulateOtpBtn) {
   });
 }
 
-document.getElementById("btn-fill").addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id) {
-    chrome.tabs.sendMessage(tab.id, {
-      action: "AUTOFILL_PAGE",
-      persona: activePersona
-    });
-  }
-});
+const fillBtn = document.getElementById("btn-fill");
+if (fillBtn) {
+  fillBtn.addEventListener("click", async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!isValidTab(tab)) return;
+
+    chrome.tabs.sendMessage(
+      tab.id,
+      { action: "AUTOFILL_PAGE", persona: activePersona },
+      () => {
+        if (chrome.runtime.lastError) return;
+      }
+    );
+  });
+}
 
 const bypassBtn = document.getElementById("btn-bypass");
 if (bypassBtn) {
   bypassBtn.addEventListener("click", async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) {
-      chrome.tabs.sendMessage(tab.id, { action: "BYPASS_OVERLAY" }, (response) => {
-        if (response?.removedCount > 0) {
-          bypassBtn.textContent = `✅ Removed Wall`;
-        } else {
-          bypassBtn.textContent = "No Sign-up Wall Found";
-        }
-        setTimeout(() => {
-          bypassBtn.textContent = "🔓 Bypass Sign-up Wall";
-        }, 1800);
-      });
-    }
+    if (!isValidTab(tab)) return;
+
+    chrome.tabs.sendMessage(tab.id, { action: "BYPASS_OVERLAY" }, (response) => {
+      if (chrome.runtime.lastError) return;
+      if (response?.removedCount > 0) {
+        bypassBtn.textContent = `✅ Removed ${response.removedCount} Overlay(s)`;
+      } else {
+        bypassBtn.textContent = "No Sign-up Wall Found";
+      }
+      setTimeout(() => {
+        bypassBtn.textContent = "🔓 Bypass Sign-up Wall";
+      }, 2000);
+    });
   });
 }
 
@@ -351,6 +388,6 @@ if (clearVaultBtn) {
   });
 }
 
-initPersona();
+createPersona();
 triggerActiveScan();
 loadVaultUI();

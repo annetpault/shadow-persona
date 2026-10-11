@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Shadow Persona Test Lab</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 30px;
+      background: #f1f5f9;
+      color: #0f172a;
+    }
+    .form-box {
+      max-width: 450px;
+      margin: 0 auto;
+      background: #ffffff;
+      padding: 24px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+    }
+    .form-group {
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 13px;
+      font-weight: bold;
+    }
+    input[type="text"], input[type="email"], input[type="password"] {
+      width: 100%;
+      padding: 8px 10px;
+      box-sizing: border-box;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+    }
+    .btn-submit {
+      width: 100%;
+      padding: 10px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    /* Simulated Deceptive Honeypot Traps */
+    .honeypot-zero-size {
+      width: 0 !important;
+      height: 0 !important;
+      opacity: 0 !important;
+      position: absolute !important;
+      pointer-events: none !important;
+    }
+    .honeypot-hidden {
+      display: none !important;
+    }
+    /* Simulated Modal Paywall */
+    #signup-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.85);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: white;
+      z-index: 99999;
+    }
+    #signup-overlay h2 {
+      margin: 0 0 10px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Simulated Paywall / Sign-up Wall Overlay -->
+  <div id="signup-overlay" class="modal-backdrop">
+    <h2>Sign up to view this document</h2>
+    <p>Please register to continue reading.</p>
+  </div>
+
+  <div class="form-box">
+    <h2>Account Registration</h2>
+    
+    <!-- Legitimate Input: Full Name -->
+    <div class="form-group">
+      <label for="fullName">Full Name</label>
+      <input type="text" id="fullName" name="fullName" placeholder="Jane Doe">
+    </div>
+
+    <!-- Honeypot Trap 1: Zero-dimension input -->
+    <input type="text" name="hidden_phone" class="honeypot-zero-size" tabindex="-1" autocomplete="off">
+
+    <!-- Legitimate Input: Email Address -->
+    <div class="form-group">
+      <label for="userEmail">Email Address</label>
+      <input type="email" id="userEmail" name="email" placeholder="name@domain.com">
+    </div>
+
+    <!-- Honeypot Trap 2: Display none -->
+    <input type="text" name="decoy_email" class="honeypot-hidden" tabindex="-1" autocomplete="off">
+
+    <!-- Legitimate Input: Password -->
+    <div class="form-group">
+      <label for="userPass">Password</label>
+      <input type="password" id="userPass" name="password">
+    </div>
+
+    <!-- Legitimate Input: Verification Code / OTP -->
+    <div class="form-group">
+      <label for="otp">Verification Code (OTP)</label>
+      <input type="text" id="otp" name="otp" placeholder="Enter 6-digit code" maxlength="6">
+    </div>
+
+    <button type="button" class="btn-submit">Complete Sign Up</button>
+  </div>
+
+</body>
+</html>
