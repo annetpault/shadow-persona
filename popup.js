@@ -38,7 +38,7 @@ function isValidTab(tab) {
 }
 
 // 1. Instant Persona Generation
-function createPersona() {
+async function createPersona() {
   const first = getRandomItem(firstNames);
   const last = getRandomItem(lastNames);
   const num = Math.floor(100 + Math.random() * 900);
@@ -57,7 +57,6 @@ function createPersona() {
 
   await chrome.storage.local.set({ activePersona });
   updateUI();
-  startAutoInboxListener();
 }
 
 function updateUI() {
@@ -83,14 +82,14 @@ function extractOTP(text) {
 async function checkInbox() {
   if (!activePersona.login || !activePersona.domain) return;
   const listEl = document.getElementById("mail-list");
-  const inboxStatus = document.getElementById("inbox-status");
   if (!listEl) return;
 
   listEl.innerHTML = "<span style='font-size:11px;color:#94a3b8'>Checking inbox...</span>";
 
   try {
-    const apiRes = await fetch(
-      `http://127.0.0.1:8000/api/inbox/otp?login=${encodeURIComponent(activePersona.login)}&domain=${encodeURIComponent(activePersona.domain)}`
+    // Direct browser fetch to 1secmail API (no local server dependency)
+    const res = await fetch(
+      `https://www.1secmail.com/api/v1/?action=getMessages&login=${encodeURIComponent(activePersona.login)}&domain=${encodeURIComponent(activePersona.domain)}`
     );
 
     if (!res.ok) throw new Error("API Offline");
@@ -98,10 +97,9 @@ async function checkInbox() {
     const messages = await res.json();
 
     if (!messages || messages.length === 0) {
-      // Provide a 1-click test simulation button if testing locally
       listEl.innerHTML = `
         <span style='font-size:11px;color:#94a3b8'>No emails received yet.</span>
-        <button id="btn-simulate-otp" style="display:block;margin-top:6px;width:100%;font-size:10px;background:#334155;color:#f8fafc;border:none;border-radius:4px;padding:4px;cursor:pointer;">
+        <button id="btn-simulate-otp" style="display:block;margin-top:6px;width:100%;font-size:10px;background:#334155;color:#f8fafc;border:none;border-radius:4px;padding:5px;cursor:pointer;">
           ⚡ Simulate Mock Test OTP (Demo)
         </button>
       `;
@@ -124,6 +122,7 @@ async function checkInbox() {
 
       const item = document.createElement("div");
       item.className = "mail-item";
+      item.style.cssText = "background:rgba(255,255,255,0.03);padding:6px;border-radius:6px;margin-top:4px;font-size:11px;";
       item.innerHTML = `
         <b>From:</b> ${msg.from}<br>
         <b>Subject:</b> ${msg.subject}<br>
@@ -131,13 +130,11 @@ async function checkInbox() {
       `;
       listEl.appendChild(item);
 
-      // Auto-fill OTP field if detected
       if (detectedOtp) {
         injectOtpToPage(detectedOtp);
       }
     }
   } catch (e) {
-    // Graceful offline fallback with local OTP injection for demo/testing
     const fallbackOtp = String(Math.floor(100000 + Math.random() * 900000));
     listEl.innerHTML = `
       <span style='font-size:11px;color:#f59e0b'>1secmail API unreachable.</span>
@@ -185,7 +182,7 @@ function renderScanReport(report) {
   }
 }
 
-// 4. Request live DOM scan from content.js
+// 3. Request live DOM scan from content.js
 async function triggerActiveScan() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
@@ -246,7 +243,11 @@ async function encryptPersona(personaObj) {
   const ivHex = Array.from(iv).map((b) => b.toString(16).padStart(2, "0")).join("");
   const dataHex = Array.from(new Uint8Array(cipherBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
 
-  return { iv: ivHex, ciphertext: dataHex, date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+  return { 
+    iv: ivHex, 
+    ciphertext: dataHex, 
+    date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+  };
 }
 
 async function decryptPersona(encryptedRecord) {
@@ -263,6 +264,29 @@ async function decryptPersona(encryptedRecord) {
   return JSON.parse(new TextDecoder().decode(decryptedBuffer));
 }
 
+// Delete a single vault record by its index
+async function deleteVaultItem(indexToRemove) {
+  const data = await chrome.storage.local.get(["encryptedVault"]);
+  let records = data.encryptedVault || [];
+  records.splice(indexToRemove, 1);
+  await chrome.storage.local.set({ encryptedVault: records });
+  await loadVaultUI();
+}
+
+// Autofill a specific persona into the current tab
+async function autofillPersonaDirectly(persona) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!isValidTab(tab)) return;
+
+  chrome.tabs.sendMessage(
+    tab.id,
+    { action: "AUTOFILL_PAGE", persona: persona },
+    () => {
+      if (chrome.runtime.lastError) return;
+    }
+  );
+}
+
 async function loadVaultUI() {
   const vaultList = document.getElementById("vault-list");
   if (!vaultList) return;
@@ -276,21 +300,57 @@ async function loadVaultUI() {
   }
 
   vaultList.innerHTML = "";
-  for (const item of records) {
+  for (let i = 0; i < records.length; i++) {
+    const item = records[i];
     try {
       const persona = await decryptPersona(item);
       const div = document.createElement("div");
       div.className = "vault-item";
+      div.style.cssText = "position:relative; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); padding:8px 10px; border-radius:8px; margin-bottom:6px;";
+
       div.innerHTML = `
-        <b>${persona.fullName}</b> <span style="color:#94a3b8; font-size:10px;">(${item.date})</span><br>
-        <span style="color:#2563eb;">${persona.email}</span><br>
-        Pass: <span style="font-family:monospace; font-weight:bold;">${persona.password}</span>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <b>${persona.fullName}</b>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="color:#94a3b8; font-size:10px;">${item.date}</span>
+            <button class="btn-vault-fill" data-index="${i}" title="Autofill this profile" style="background:#2563eb; color:#fff; border:none; border-radius:4px; padding:2px 7px; font-size:10px; font-weight:600; cursor:pointer;">⚡ Fill</button>
+            <button class="btn-del-item" data-index="${i}" title="Delete persona" style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.3); color:#ef4444; border-radius:4px; padding:2px 6px; font-size:11px; font-weight:bold; cursor:pointer;">✕</button>
+          </div>
+        </div>
+        <div style="color:#60a5fa; font-size:11px; margin-bottom:2px;">${persona.email}</div>
+        <div style="font-size:11px; color:#94a3b8;">Pass: <span style="font-family:monospace; font-weight:bold; color:#38bdf8;">${persona.password}</span></div>
       `;
       vaultList.appendChild(div);
     } catch (e) {
       console.error("Vault decryption error", e);
     }
   }
+
+  // Attach event listeners to all per-item delete buttons
+  document.querySelectorAll(".btn-del-item").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const index = parseInt(btn.getAttribute("data-index"), 10);
+      await deleteVaultItem(index);
+    });
+  });
+
+  // Attach event listeners to all per-item autofill buttons
+  document.querySelectorAll(".btn-vault-fill").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const index = parseInt(btn.getAttribute("data-index"), 10);
+      const targetRecord = records[index];
+      if (targetRecord) {
+        const decryptedTarget = await decryptPersona(targetRecord);
+        btn.textContent = "Filled!";
+        await autofillPersonaDirectly(decryptedTarget);
+        setTimeout(() => {
+          btn.textContent = "⚡ Fill";
+        }, 1200);
+      }
+    });
+  });
 }
 
 // 5. Button Bindings
@@ -301,26 +361,7 @@ if (regenBtn) {
 
 const checkMailBtn = document.getElementById("btn-check-mail");
 if (checkMailBtn) {
-  checkMailBtn.addEventListener("click", () => checkInbox(false));
-}
-
-// Send Test OTP Button
-const simulateOtpBtn = document.getElementById("btn-simulate-otp");
-if (simulateOtpBtn) {
-  simulateOtpBtn.addEventListener("click", async () => {
-    if (!activePersona.email) return;
-    simulateOtpBtn.textContent = "Sending...";
-    try {
-      const res = await fetch(`http://127.0.0.1:8000/api/inbox/simulate?email=${encodeURIComponent(activePersona.email)}`);
-      const data = await res.json();
-      simulateOtpBtn.textContent = "Sent!";
-      setTimeout(() => (simulateOtpBtn.textContent = "⚡ Send Test OTP"), 1500);
-      await checkInbox(false);
-    } catch (e) {
-      simulateOtpBtn.textContent = "Error";
-      setTimeout(() => (simulateOtpBtn.textContent = "⚡ Send Test OTP"), 1500);
-    }
-  });
+  checkMailBtn.addEventListener("click", () => checkInbox());
 }
 
 const fillBtn = document.getElementById("btn-fill");
@@ -329,11 +370,19 @@ if (fillBtn) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!isValidTab(tab)) return;
 
+    fillBtn.textContent = "⚡ Autofilling...";
+    fillBtn.disabled = true;
+
     chrome.tabs.sendMessage(
       tab.id,
       { action: "AUTOFILL_PAGE", persona: activePersona },
       () => {
         if (chrome.runtime.lastError) return;
+        fillBtn.textContent = "✅ Done!";
+        setTimeout(() => {
+          fillBtn.textContent = "⚡ Autofill Page";
+          fillBtn.disabled = false;
+        }, 1200);
       }
     );
   });
@@ -373,7 +422,7 @@ if (saveVaultBtn) {
     await chrome.storage.local.set({ encryptedVault: vault });
 
     saveVaultBtn.textContent = "✅ Saved (AES-256)!";
-    loadVaultUI();
+    await loadVaultUI();
     setTimeout(() => {
       saveVaultBtn.textContent = "🔒 Save to Encrypted Vault";
     }, 1500);
@@ -384,10 +433,11 @@ const clearVaultBtn = document.getElementById("btn-clear-vault");
 if (clearVaultBtn) {
   clearVaultBtn.addEventListener("click", async () => {
     await chrome.storage.local.set({ encryptedVault: [] });
-    loadVaultUI();
+    await loadVaultUI();
   });
 }
 
+// Initial bootstrap
 createPersona();
 triggerActiveScan();
 loadVaultUI();

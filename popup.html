@@ -13,7 +13,7 @@
     }
 
     body {
-      width: 320px;
+      width: 340px;
       background: linear-gradient(180deg, #0d121f 0%, #090d16 100%);
       color: #f8fafc;
       padding: 16px;
@@ -185,7 +185,7 @@
     }
 
     #vault-list {
-      max-height: 120px;
+      max-height: 140px;
       overflow-y: auto;
       margin-top: 6px;
     }
@@ -197,9 +197,18 @@
       background: rgba(255, 255, 255, 0.02);
       border: 1px solid rgba(255, 255, 255, 0.04);
       border-radius: 8px;
-      padding: 6px 8px;
+      padding: 8px 10px;
       margin-bottom: 6px;
-      font-size: 10.5px;
+      font-size: 11px;
+    }
+
+    .btn-vault-fill:hover {
+      background: #1d4ed8 !important;
+    }
+
+    .btn-del-item:hover {
+      background: rgba(239, 68, 68, 0.35) !important;
+      color: #ffffff !important;
     }
   </style>
 </head>
@@ -212,16 +221,16 @@
   </div>
 
   <div id="status" class="badge safe">
-    ✅ Scanning Page...
+    ✅ Ready
   </div>
 
   <div class="card">
     <div class="card-row">
-      <span class="label">Alias</span>
+      <span class="label">Name</span>
       <span class="val" id="mock-name">Loading...</span>
     </div>
     <div class="card-row">
-      <span class="label">Disposable</span>
+      <span class="label">Email</span>
       <span class="val" id="mock-email" style="color: #60a5fa;">Loading...</span>
     </div>
     <div class="card-row">
@@ -248,7 +257,7 @@
   </button>
 
   <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px; margin-bottom: 10px;">
-    <div class="section-title">Inbox Polling (OTPs)</div>
+    <div class="section-title">Verification Code</div>
     <button class="btn-subtle" id="btn-check-mail" style="width: 100%;">
       📬 Check Inbox
     </button>

@@ -49,52 +49,14 @@ function runShadowScan() {
     }
   });
 
-// --- MODULE 1: COMPREHENSIVE HONEYPOT & TRAP DETECTION ENGINE ---
+  const report = {
+    totalInputs: allInputs.length,
+    hiddenBoxes: hiddenCount,
+    invisibleBoxes: invisibleCount,
+    isSuspicious: invisibleCount > 0
+  };
 
-function isElementHiddenOrTrap(element) {
-  const style = window.getComputedStyle(element);
-  const rect = element.getBoundingClientRect();
-
-  // 1. Explicit display/visibility hiding
-  if (
-    style.display === "none" ||
-    style.visibility === "hidden" ||
-    parseFloat(style.opacity) === 0 ||
-    element.getAttribute("aria-hidden") === "true"
-  ) {
-    return true;
-  }
-
-  // 2. Zero-dimension rendering
-  if (
-    (rect.width === 0 && rect.height === 0) ||
-    parseFloat(style.width) === 0 ||
-    parseFloat(style.height) === 0 ||
-    parseFloat(style.maxHeight) === 0
-  ) {
-    return true;
-  }
-
-  // 3. Off-screen absolute or fixed positioning
-  const left = rect.left;
-  const top = rect.top;
-  if (
-    left < -999 ||
-    top < -999 ||
-    parseFloat(style.left) < -999 ||
-    parseFloat(style.top) < -999
-  ) {
-    return true;
-  }
-
-  // 4. CSS Clipping / Collapsed bounds
-  if (
-    style.clipPath === "inset(50%)" ||
-    style.clipPath === "polygon(0px 0px, 0px 0px, 0px 0px)" ||
-    (style.clip && style.clip !== "auto" && style.clip.includes("rect(0"))
-  ) {
-    return true;
-  }
+  chrome.storage.local.set({ scanReport: report });
 
   if (report.isSuspicious && !document.getElementById("shadow-persona-hud-host")) {
     injectInPageWarning(report);
@@ -467,21 +429,46 @@ function injectInPageWarning(report) {
       .vault-item-header {
         display: flex;
         justify-content: space-between;
+        align-items: center;
         margin-bottom: 4px;
         color: #f1f5f9;
         font-weight: 600;
       }
 
-      .vault-copy {
-        background: #1e293b;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        color: #94a3b8;
-        font-size: 9px;
+      .vault-actions {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .vault-fill-btn {
+        background: #2563eb;
+        border: none;
+        color: #fff;
+        font-size: 9.5px;
+        font-weight: 600;
         padding: 2px 6px;
         border-radius: 4px;
         cursor: pointer;
+        transition: background 0.15s;
       }
-      .vault-copy:hover { color: #fff; background: #334155; }
+      .vault-fill-btn:hover { background: #1d4ed8; }
+
+      .vault-del-btn {
+        background: rgba(239, 68, 68, 0.15);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        color: #ef4444;
+        font-size: 10px;
+        font-weight: bold;
+        padding: 1px 5px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .vault-del-btn:hover {
+        background: rgba(239, 68, 68, 0.35);
+        color: #fff;
+      }
 
       .inbox-section {
         margin-top: 10px;
@@ -569,9 +556,9 @@ function injectInPageWarning(report) {
         </div>
 
         <div class="inbox-section">
-          <div class="inbox-title">Verification Code</div>
+          <div class="inbox-title">Temporary Mailbox Polling</div>
           <button class="action-btn btn-subtle" id="hud-check-inbox">
-            📬 Check for Code
+            📬 Poll OTP / Inbox
           </button>
           <div id="hud-inbox-output" style="margin-top: 6px; font-size: 11px; color: #94a3b8;"></div>
         </div>
@@ -592,7 +579,7 @@ function injectInPageWarning(report) {
     panel.style.display = "block";
   });
 
-  // Action: Autofill
+  // Action: Autofill Current HUD Persona
   shadow.getElementById("hud-autofill-btn").addEventListener("click", async () => {
     const btn = shadow.getElementById("hud-autofill-btn");
     btn.textContent = "⚡ Emulating Human Keystrokes...";
@@ -646,7 +633,9 @@ function injectInPageWarning(report) {
       await chrome.storage.local.set({ encryptedVault: vault });
 
       btn.textContent = "✅ Saved (AES)";
-      renderVaultRecords();
+      if (vaultView.style.display === "block") {
+        renderVaultRecords();
+      }
     } catch (e) {
       btn.textContent = "❌ Error";
     }
@@ -656,7 +645,16 @@ function injectInPageWarning(report) {
     }, 1500);
   });
 
-  // Action: View Vault
+  // Helper: Delete single item from vault in content HUD
+  async function deleteVaultRecord(indexToRemove) {
+    const data = await chrome.storage.local.get(["encryptedVault"]);
+    let records = data.encryptedVault || [];
+    records.splice(indexToRemove, 1);
+    await chrome.storage.local.set({ encryptedVault: records });
+    await renderVaultRecords();
+  }
+
+  // Action: View Vault (with Fill & Delete per item)
   async function renderVaultRecords() {
     const data = await chrome.storage.local.get(["encryptedVault"]);
     const records = data.encryptedVault || [];
@@ -667,7 +665,8 @@ function injectInPageWarning(report) {
     }
 
     vaultList.innerHTML = "";
-    for (const item of records) {
+    for (let i = 0; i < records.length; i++) {
+      const item = records[i];
       try {
         const decrypted = await decryptPersona(item);
         const entry = document.createElement("div");
@@ -675,17 +674,27 @@ function injectInPageWarning(report) {
         entry.innerHTML = `
           <div class="vault-item-header">
             <span>${decrypted.fullName} <span style="color:#64748b;font-weight:400;">(${item.date})</span></span>
-            <button class="vault-copy">Copy</button>
+            <div class="vault-actions">
+              <button class="vault-fill-btn" data-index="${i}">⚡ Fill</button>
+              <button class="vault-del-btn" data-index="${i}">✕</button>
+            </div>
           </div>
           <div style="color:#60a5fa;margin-bottom:2px;">${decrypted.email}</div>
           <div style="font-family:'JetBrains Mono',monospace;color:#94a3b8;">${decrypted.password}</div>
         `;
 
-        entry.querySelector(".vault-copy").addEventListener("click", () => {
-          navigator.clipboard.writeText(decrypted.password);
-          const cBtn = entry.querySelector(".vault-copy");
-          cBtn.textContent = "Copied";
-          setTimeout(() => (cBtn.textContent = "Copy"), 1200);
+        // Wire up per-item Fill
+        entry.querySelector(".vault-fill-btn").addEventListener("click", async (e) => {
+          const btn = e.target;
+          btn.textContent = "Filling...";
+          await fillFormInputs(decrypted);
+          btn.textContent = "Filled!";
+          setTimeout(() => (btn.textContent = "⚡ Fill"), 1200);
+        });
+
+        // Wire up per-item Delete
+        entry.querySelector(".vault-del-btn").addEventListener("click", async () => {
+          await deleteVaultRecord(i);
         });
 
         vaultList.appendChild(entry);
@@ -712,7 +721,7 @@ function injectInPageWarning(report) {
   // Action: Check Inbox / OTP
   shadow.getElementById("hud-check-inbox").addEventListener("click", async () => {
     const out = shadow.getElementById("hud-inbox-output");
-    out.innerHTML = "<span style='color:#60a5fa;'>Checking for code...</span>";
+    out.innerHTML = "<span style='color:#60a5fa;'>Polling 1secmail...</span>";
 
     try {
       const res = await fetch(`https://www.1secmail.com/api/v1/?action=getMessages&login=${hudPersona.login}&domain=${hudPersona.domain}`);
@@ -722,22 +731,22 @@ function injectInPageWarning(report) {
         const mockCode = String(Math.floor(100000 + Math.random() * 900000));
         out.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:6px;margin-top:4px;">
-            <span style="color:#94a3b8;">Sample Code</span>
-            <button id="in-page-mock-otp" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:10px;font-weight:600;cursor:pointer;">
-              Fill Code: ${mockCode}
+            <span>No incoming mail</span>
+            <button id="in-page-mock-otp" style="background:#2563eb;color:#fff;border:none;border-radius:5px;padding:3px 7px;font-size:10px;font-weight:600;cursor:pointer;">
+              Inject OTP: ${mockCode}
             </button>
           </div>
         `;
         shadow.getElementById("in-page-mock-otp")?.addEventListener("click", () => {
           fillOtpInput(mockCode);
-          out.innerHTML = `<span style="color:#34d399;">Applied Code: <b>${mockCode}</b></span>`;
+          out.innerHTML = `<span style="color:#34d399;">Injected OTP <b>${mockCode}</b></span>`;
         });
       } else {
         const mail = await fetch(`https://www.1secmail.com/api/v1/?action=readMessage&login=${hudPersona.login}&domain=${hudPersona.domain}&id=${messages[0].id}`).then((r) => r.json());
         const otpMatch = (mail.textBody || mail.body || "").match(/\b\d{4,6}\b/);
         if (otpMatch) {
           fillOtpInput(otpMatch[0]);
-          out.innerHTML = `<span style="color:#34d399;">Found & Filled Code: <b>${otpMatch[0]}</b></span>`;
+          out.innerHTML = `<span style="color:#34d399;">Detected & Injected OTP: <b>${otpMatch[0]}</b></span>`;
         } else {
           out.innerHTML = `<span style="color:#cbd5e1;">Subject: ${mail.subject}</span>`;
         }
@@ -746,15 +755,15 @@ function injectInPageWarning(report) {
       const demoOtp = String(Math.floor(100000 + Math.random() * 900000));
       out.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:6px;margin-top:4px;">
-          <span style="color:#94a3b8;">Sample Code</span>
-          <button id="in-page-demo-btn" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:4px 8px;font-size:10px;font-weight:600;cursor:pointer;">
-            Fill Code: ${demoOtp}
+          <span style="color:#f59e0b;">Offline Fallback</span>
+          <button id="in-page-demo-btn" style="background:#2563eb;color:#fff;border:none;border-radius:5px;padding:3px 7px;font-size:10px;font-weight:600;cursor:pointer;">
+            Inject OTP: ${demoOtp}
           </button>
         </div>
       `;
       shadow.getElementById("in-page-demo-btn")?.addEventListener("click", () => {
         fillOtpInput(demoOtp);
-        out.innerHTML = `<span style="color:#34d399;">Applied Code: <b>${demoOtp}</b></span>`;
+        out.innerHTML = `<span style="color:#34d399;">Applied OTP <b>${demoOtp}</b></span>`;
       });
     }
   });
@@ -773,6 +782,7 @@ function fillOtpInput(code) {
 // 5. Core Autofill Mechanism (Sequential Jitter)
 // ==========================================
 async function fillFormInputs(persona) {
+  if (!persona) return;
   const inputs = document.querySelectorAll("input");
   let filledCount = 0;
 
